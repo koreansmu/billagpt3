@@ -1,4 +1,5 @@
-aiogram~=2.22.2
+aiogram~=2.25.2
 openai~=0.27.2
-PyYAML~=6.0.1
-rich~=13.5.2
+PyYAML
+rich
+beautifulsoup4
