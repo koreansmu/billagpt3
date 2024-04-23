@@ -30,10 +30,10 @@ class Message(dict):
 
 
 class Chat(dict):  # TODO: created_at, accessed_at, model
-    def __init__(self, uid: int, owner: int, title: Optional[str], messages: List[Union[dict, Message]] = []) -> None:
-        if len(messages) > 0 and not isinstance(messages[0], Message):
+    def __init__(self, uid: int, owner: int, title: Optional[str], messages: List[Union[dict, Message]] = None) -> None:
+        if messages is not None and len(messages) > 0 and not isinstance(messages[0], Message):
             messages = list(map(lambda m: Message(**m), messages))
-        super().__init__({"uid": uid, "owner": owner, "title": title, "messages": messages})
+        super().__init__({"uid": uid, "owner": owner, "title": title, "messages": messages or []})
 
 
     @property
@@ -109,7 +109,7 @@ class Database():
 
     def create_message(self, chat_id: int, role: str, *, content: Optional[Union[str, dict]] = None, tool_calls: Optional[List[dict]] = None, call_id: Optional[str] = None, function_name: Optional[str] = None) -> Message:
         message = Message(role, content, tool_calls, call_id, function_name)
-        self.get_chat(chat_id).messages.append(content)
+        self.get_chat(chat_id).messages.append(message)
         self.commit()
         return message
 

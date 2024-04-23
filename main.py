@@ -1,10 +1,12 @@
 import aiohttp
+import asyncio
 import base64
 import openai
 import re
 
 from aiogram import Bot, Dispatcher, executor, types
 from bs4 import BeautifulSoup
+from googlesearch import search, SearchResult
 from datetime import datetime
 from io import BytesIO
 from math import ceil
@@ -14,6 +16,16 @@ from yaml import load, Loader
 from database import *
 from logger import Logger
 
+# === TODO ===
+# Apis:
+# - WolframAlpha
+# - Reddit
+#
+# Code:
+# - Cut tokens so the model would not overflow
+# - Ability to select model (default/in-chat)
+# - More chat stats (created, accessed)
+
 log = Logger()
 config = load(open("config.yml"), Loader=Loader)
 bot = Bot(config["bot_token"])
@@ -22,8 +34,6 @@ db = Database()
 openai.api_key = config["openai_token"]
 
 system_message = None
-# chats: dict[int, list] = {}
-# db_chats: dict[int, Chat] = {}
 selected_chats: Dict[int, int] = {}
 escaped = ['[', ']', '(', ')', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 commands = {
@@ -146,18 +156,30 @@ async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo-0125") 
             log.info(f"Webpage call to [bold]{url}[/] took {tokens_total} ({tokens_prompt} in, {tokens_completion} out) tokens ([bold green]{price}$[/])")
             return response["choices"][0]["message"]["content"]
 
+
+async def google(prompt: str):
+    search_result = await asyncio.get_event_loop().run_in_executor(None, lambda: list(search(prompt, advanced=True)))
+    urls = []
+    results = []
+    for result in search_result:
+        if result.url not in urls:
+            results.append({"url": result.url, "title": result.title, "description": result.description})
+    return json.dumps(results)
+
+
 py_functions = {
-    "ask_webpage": ask_webpage
+    "ask_webpage": ask_webpage,
+    "google": google
 }
 
 functions = [{
     "type": "function",
     "function": {
         "name": "ask_webpage",
-        "description": "Send a web request to the spectified url and ask another GPT about it",
+        "description": "Send a web request to the spectified url and ask another GPT about it. You'd better use it with google",
         "parameters": {
             "type": "object",
-            "properties": {
+            "properties": { # add model as param to analyze some pages in details
                 "url": {
                     "type": "string",
                     "description": "The url to send the request to"
@@ -168,6 +190,22 @@ functions = [{
                 }
             },
             "required": ["url", "prompt"]
+        }
+    }
+}, {
+    "type": "function",
+    "function": {
+        "name": "google",
+        "description": "Google a prompt online. Returns 10 arrays of dictionries (url, title, description). Better send multiple prompts as separate messages at once",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": { # add max results as a parameter 
+                    "type": "string",
+                    "description": "The prompt that would be googled"
+                },
+            },
+            "required": ["prompt"]
         }
     }
 }]
@@ -333,8 +371,7 @@ async def on_wip(message: types.Message):
 
 @dp.message_handler(commands=["reset"])
 async def on_reset(message: types.Message):
-    if message.from_id in selected_chats.keys():
-        selected_chats.pop(message.from_id, [])
+    selected_chats.pop(message.from_id, 0)
     await message.reply("Message history has been cleared")
 
 
@@ -355,7 +392,22 @@ async def on_chats(message: types.Message):
     await message.answer("Your chats", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
-async def generate_result(message: types.Message, level: int = 0):
+def parse_domain(url: str) -> str:
+    # stolen from: https://stackoverflow.com/questions/27745/getting-parts-of-a-url-regex
+    return re.match(r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?", url).group(4)
+
+
+def display_function(function: str, args: dict) -> str:
+    match function:
+        case "ask_webpage":
+            return f"🌐 Analyzing <a href='{args['url']}'>{parse_domain(args['url'])}</a>"
+        case "google":
+            return f"🔎 Searching <i>{args['prompt']}</i>"
+        case _:
+            return f"🔧 Using <code>{function}</code>"
+
+
+async def generate_result(message: types.Message, level: int = 0) -> None:
     try:
         start = datetime.now()
         response = await openai.ChatCompletion.acreate(
@@ -374,8 +426,8 @@ async def generate_result(message: types.Message, level: int = 0):
             f"Generation of [bold]{truncate_text(message.text)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
         
         msg = response["choices"][0]["message"]
-        await message.delete()
         if msg["content"]:
+            await message.delete()
             if tokens_completion == 0:
                 await message.answer("📭 Model returned nothing (zero-length text)")
             else:
@@ -401,9 +453,9 @@ async def generate_result(message: types.Message, level: int = 0):
                 func = call['function']
                 args = json.loads(func["arguments"])
                 log.info(f"Calling {func['name']} with {func['arguments']}")
-                message.answer(f"🔧 Using {func['name']}")
+                await message.answer(display_function(func['name'], args), parse_mode="html")
                 db.create_message(selected_chats[message.chat.id], "tool", 
-                                  content=await py_functions[func["name"]](args), call_id=call["id"], function_name=func["name"])
+                                  content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
             await generate_result(message, level+1)
         else:
             log.error("Empty message!..")
