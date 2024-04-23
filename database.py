@@ -4,48 +4,8 @@ from os.path import exists
 from typing import Optional, List, Union
 
 
-class Function(dict):
-    def __init__(self, name: str, arguments: str):
-        super().__init__({"name": name, "arguments": arguments})
-
-
-    @property
-    def name(self) -> str:
-        return self["name"]
-
-
-    @property
-    def arguments(self) -> dict:
-        return json.loads(self["arguments"])
-
-
-class ToolCall(dict):
-    def __init__(self, id: str, type: str, function: Union[dict, Function]) -> None:
-        if not isinstance(function, Function):
-            function = Function(**function)
-        super().__init__({"id": id, "type": type, "function": function})
-
-
-    @property
-    def id(self) -> str:
-        return self["id"]
-
-
-    @property
-    def type(self) -> str:
-        return self["type"]
-
-
-    @property
-    def function(self) -> Function:
-        return self["function"]
-
-
-class Message(dict): # ToolCall and Function probably were unnecessary 
-    def __init__(self, role: str, content: Optional[str], tool_calls: Optional[List[Union[dict, ToolCall]]] = None, tool_call_id: Optional[str] = None, name: Optional[str] = None) -> None:
-        if tool_calls is not None and len(tool_calls) > 0 and not isinstance(tool_calls[0], ToolCall):
-            tool_calls = list(map(lambda t: ToolCall(**t), tool_calls))
-
+class Message(dict):
+    def __init__(self, role: str, content: Optional[str], tool_calls: Optional[List[dict]] = None, tool_call_id: Optional[str] = None, name: Optional[str] = None) -> None:
         if tool_calls:
             super().__init__({"role": role, "content": content, "tool_calls": tool_calls})
         elif tool_call_id and name:
@@ -65,7 +25,7 @@ class Message(dict): # ToolCall and Function probably were unnecessary
 
 
     @property
-    def tool_calls(self) -> Optional[List[ToolCall]]:
+    def tool_calls(self) -> Optional[List[dict]]:
         return self["tool_calls"]
 
 
@@ -147,7 +107,7 @@ class Database():
         self.commit()
 
 
-    def create_message(self, chat_id: int, role: str, *, content: Optional[Union[str, dict]] = None, tool_calls: Optional[List[ToolCall]] = None, call_id: Optional[str] = None, function_name: Optional[str] = None) -> Message:
+    def create_message(self, chat_id: int, role: str, *, content: Optional[Union[str, dict]] = None, tool_calls: Optional[List[dict]] = None, call_id: Optional[str] = None, function_name: Optional[str] = None) -> Message:
         message = Message(role, content, tool_calls, call_id, function_name)
         self.get_chat(chat_id).messages.append(content)
         self.commit()
