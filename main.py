@@ -6,7 +6,6 @@ import re
 
 from aiogram import Bot, Dispatcher, executor, types
 from bs4 import BeautifulSoup
-from googlesearch import search, SearchResult
 from datetime import datetime
 from io import BytesIO
 from math import ceil
@@ -32,7 +31,7 @@ dp = Dispatcher(bot)
 db = Database()
 openai.api_key = config["openai_token"]
 
-system_message = None
+system_message = "You are very helpful AI assistant. You have ability to search online and ask another GPT 'agent' about content of specified URL. Search a lot of things to get many details. Search engine is Bing So when you're doing research better SEND ALL OF SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!"
 selected_chats: Dict[int, int] = {}
 escaped = ['[', ']', '(', ')', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 commands = {
@@ -156,26 +155,25 @@ async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo-0125") 
             return response["choices"][0]["message"]["content"]
 
 
-async def google(prompt: str):
-    search_result = await asyncio.get_event_loop().run_in_executor(None, lambda: list(search(prompt, advanced=True)))
-    urls = []
+async def search(prompt: str):
     results = []
-    for result in search_result:
-        if result.url not in urls:
-            results.append({"url": result.url, "title": result.title, "description": result.description})
+    async with aiohttp.ClientSession(headers={"Ocp-Apim-Subscription-Key": config["bing_token"]}) as session:
+        async with session.get("https://api.bing.microsoft.com/v7.0/search", params={"q": prompt}) as response:
+            for result in (await response.json())["webPages"]["value"]:
+                results.append({"url": result["url"], "title": result["name"]})
     return json.dumps(results)
 
 
 py_functions = {
     "ask_webpage": ask_webpage,
-    "google": google
+    "search": search
 }
 
 functions = [{
     "type": "function",
     "function": {
         "name": "ask_webpage",
-        "description": "Send a web request to the spectified url and ask another GPT about it. You'd better use it with google",
+        "description": "Send a web request to the spectified url and ask another GPT about it. Use this to after searching to inspect the results",
         "parameters": {
             "type": "object",
             "properties": { # add model as param to analyze some pages in details
@@ -194,14 +192,14 @@ functions = [{
 }, {
     "type": "function",
     "function": {
-        "name": "google",
-        "description": "Google a prompt online. Returns 10 arrays of dictionries (url, title, description). Better send multiple prompts as separate messages at once. Don't use it for general knowledge and obvious, basic questions. Use 'ask_webpage' to inspect search results",
+        "name": "search",
+        "description": "Search a prompt online. Returns 10 arrays of dictionries (url and title). Better send multiple prompts as separate messages at once. Don't use it for general knowledge and obvious, basic questions",
         "parameters": {
             "type": "object",
             "properties": {
                 "prompt": { # add max results as a parameter 
                     "type": "string",
-                    "description": "The prompt that would be googled"
+                    "description": "The prompt that would be searched"
                 },
             },
             "required": ["prompt"]
@@ -402,7 +400,7 @@ def display_function(function: str, args: dict) -> str:
     match function:
         case "ask_webpage":
             return f"🌐 Analyzing <a href='{args['url']}'>{parse_domain(args['url'])}</a>"
-        case "google":
+        case "search":
             return f"🔎 Searching <i>{args['prompt']}</i>"
         case _:
             return f"🔧 Using <code>{function}</code>"
@@ -455,7 +453,7 @@ async def generate_result(message: types.Message, level: int = 0) -> None:
                 args = json.loads(func["arguments"])
                 if func["name"] in py_functions.keys():
                     log.info(f"Calling {func['name']} with {func['arguments']}")
-                    await message.answer(display_function(func['name'], args), parse_mode="html")
+                    await message.answer(display_function(func['name'], args), parse_mode="html", disable_web_page_preview=True)
                     db.create_message(selected_chats[message.chat.id], "tool", 
                                     content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
                 else:
