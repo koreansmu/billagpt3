@@ -24,7 +24,6 @@ from logger import Logger
 # Code:
 # - Cut tokens so the model would not overflow
 # - Ability to select model (default/in-chat)
-# - More chat stats (created, accessed)
 
 log = Logger()
 config = load(open("config.yml"), Loader=Loader)
@@ -196,7 +195,7 @@ functions = [{
     "type": "function",
     "function": {
         "name": "google",
-        "description": "Google a prompt online. Returns 10 arrays of dictionries (url, title, description). Better send multiple prompts as separate messages at once",
+        "description": "Google a prompt online. Returns 10 arrays of dictionries (url, title, description). Better send multiple prompts as separate messages at once. Don't use it for general knowledge and obvious, basic questions. Use 'ask_webpage' to inspect search results",
         "parameters": {
             "type": "object",
             "properties": {
@@ -274,7 +273,9 @@ async def callback_handler(query: types.CallbackQuery):
         ]
 
         await query.message.answer(f"#{chat.uid}\n" + \
-                                    f"Chat title: <b>{chat.title}</b>\n",
+                                    f"Chat title: <b>{chat.title}</b>\n" + \
+                                    f"Created at <b>{chat.created_at.strftime('%H:%M %d.%m.%Y')}</b>\n" + \
+                                    f"Last accessed <b>{chat.last_accessed.strftime('%H:%M %d.%m.%Y')}</b>",
                                     parse_mode="html",
                                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
                                     # TODO: created and accessed at
@@ -452,10 +453,15 @@ async def generate_result(message: types.Message, level: int = 0) -> None:
             for call in calls:
                 func = call['function']
                 args = json.loads(func["arguments"])
-                log.info(f"Calling {func['name']} with {func['arguments']}")
-                await message.answer(display_function(func['name'], args), parse_mode="html")
-                db.create_message(selected_chats[message.chat.id], "tool", 
-                                  content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
+                if func["name"] in py_functions.keys():
+                    log.info(f"Calling {func['name']} with {func['arguments']}")
+                    await message.answer(display_function(func['name'], args), parse_mode="html")
+                    db.create_message(selected_chats[message.chat.id], "tool", 
+                                    content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
+                else:
+                    log.warn(f"GPT tried to call non-existing {func['name']}")
+                    await message.answer(f"GPT tried to call non-existing <code>{func['name']}</code>", parse_mode="html")
+                    db.create_message(selected_chats[message.chat.id], "tool", content=f"Function {func['name']} not found!", call_id=call["id"], function_name=func["name"])
             await generate_result(message, level+1)
         else:
             log.error("Empty message!..")
