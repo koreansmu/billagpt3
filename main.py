@@ -45,15 +45,11 @@ commands = {
 
 # model -> [in, out]
 pricing = { 
-    "gpt-4-vision-preview": [0.01, 0.03],
-    "gpt-4-turbo-preview": [0.01, 0.03],
-    "gpt-4": [0.03, 0.06],
-    "gpt-4-32k": [0.06, 0.12],
-    "gpt-3.5-turbo-0125": [0.0005, 0.0015], # better use this instead of just gpt-3.5-turbo
-    "gpt-3.5-turbo-instruct": [0.0015, 0.0020]
+    "gpt-4-turbo": [0.01, 0.03],
+    "gpt-3.5-turbo": [0.0005, 0.0015], 
 }
-# model = "gpt-4-turbo-preview"
-model = "gpt-3.5-turbo-0125"
+model = "gpt-4-turbo"
+# model = "gpt-3.5-turbo"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0"
@@ -484,13 +480,15 @@ async def on_message(message: types.Message):
     new = await message.answer("🧠 Starting generating...")
 
     if len(message.photo):
-        if model != "gpt-4-vision-preview":
-            await new.edit("❌ Images are not supported in this model")
+        if model != "gpt-4-turbo":
+            await new.edit_text("❌ Images are not supported in this model")
             return
         for photo in message.photo:
             buffer = BytesIO()
             await photo.download(destination_file=buffer)
             img_str = str(base64.b64encode(buffer.getvalue()), encoding="utf8")
+            if message.from_id not in selected_chats.keys():
+                selected_chats[message.from_id] = db.create_chat(await create_title(message.text or message.caption), message.from_id).uid
             db.create_message(selected_chats[message.from_id], "user",
                               content=[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}])  # TODO: improve code
     
