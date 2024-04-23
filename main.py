@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from io import BytesIO
 from math import ceil
+from typing import Dict
 from yaml import load, Loader
 
 from database import *
@@ -21,8 +22,9 @@ db = Database()
 openai.api_key = config["openai_token"]
 
 system_message = None
-chats: dict[int, list] = {}
-db_chats: dict[int, Chat] = {}
+# chats: dict[int, list] = {}
+# db_chats: dict[int, Chat] = {}
+selected_chats: Dict[int, int] = {}
 escaped = ['[', ']', '(', ')', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 commands = {
     "help": "Help message",
@@ -42,7 +44,8 @@ pricing = {
     "gpt-3.5-turbo-0125": [0.0005, 0.0015], # better use this instead of just gpt-3.5-turbo
     "gpt-3.5-turbo-instruct": [0.0015, 0.0020]
 }
-model = "gpt-4-turbo-preview"
+# model = "gpt-4-turbo-preview"
+model = "gpt-3.5-turbo-0125"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0"
@@ -143,6 +146,32 @@ async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo-0125") 
             log.info(f"Webpage call to [bold]{url}[/] took {tokens_total} ({tokens_prompt} in, {tokens_completion} out) tokens ([bold green]{price}$[/])")
             return response["choices"][0]["message"]["content"]
 
+py_functions = {
+    "ask_webpage": ask_webpage
+}
+
+functions = [{
+    "type": "function",
+    "function": {
+        "name": "ask_webpage",
+        "description": "Send a web request to the spectified url and ask another GPT about it",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The url to send the request to"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The prompt that would be asked"
+                }
+            },
+            "required": ["url", "prompt"]
+        }
+    }
+}]
+
 
 @dp.callback_query_handler()
 async def callback_handler(query: types.CallbackQuery):
@@ -207,12 +236,12 @@ async def callback_handler(query: types.CallbackQuery):
         ]
 
         await query.message.answer(f"#{chat.uid}\n" + \
-                                    f"Chat title: <b>{chat.title}</b>\n" + \
-                                    f"Created: <b>{chat.created_at.strftime('%H:%M %d.%m.%Y')}</b>\n" + \
-                                    f"Last accessed: <b>{chat.last_accessed.strftime('%H:%M %d.%m.%Y')}</b>", 
+                                    f"Chat title: <b>{chat.title}</b>\n",
                                     parse_mode="html",
                                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-        db_chats[query.from_user.id] = chat
+                                    # TODO: created and accessed at
+
+        selected_chats[query.from_user.id] = chat.uid
 
     elif data.startswith("deletechat"):
         chat_id = -1
@@ -251,10 +280,8 @@ async def callback_handler(query: types.CallbackQuery):
             await query.answer("Access denied!")
             return
         
-        db_chats[query.from_user.id] = chat
-        messages = list(map(lambda m: m.pack(), db.get_messages(chat.uid)))
-        chats[query.from_user.id] = messages
-        await query.message.edit_text(f"Chat <b>{chat.title}</b> has been successfully loaded. Total {len(messages)} messages", parse_mode="html")
+        selected_chats[query.from_user.id] = chat.uid
+        await query.message.edit_text(f"Chat <b>{chat.title}</b> has been successfully loaded. Total {len(db.get_messages(chat.uid))} messages", parse_mode="html")
 
 
 @dp.message_handler(commands=["askweb"])
@@ -306,9 +333,8 @@ async def on_wip(message: types.Message):
 
 @dp.message_handler(commands=["reset"])
 async def on_reset(message: types.Message):
-    if message.from_id in chats.keys():
-        chats.pop(message.from_id, [])
-        db_chats.pop(message.from_id, None)
+    if message.from_id in selected_chats.keys():
+        selected_chats.pop(message.from_id, [])
     await message.reply("Message history has been cleared")
 
 
@@ -327,6 +353,66 @@ async def on_chats(message: types.Message):
         types.InlineKeyboardButton(">>", callback_data="chatpage_1") if len(chats) > 5 else types.InlineKeyboardButton("•", callback_data="donothing")
     ])
     await message.answer("Your chats", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+async def generate_result(message: types.Message, level: int = 0):
+    try:
+        start = datetime.now()
+        response = await openai.ChatCompletion.acreate(
+            model=model,
+            messages=db.get_messages(selected_chats[message.chat.id]),
+            max_tokens=2048,
+            tools=functions
+        )
+        spent = str(round((datetime.now() - start).total_seconds(), 2))
+        tokens_total = response["usage"]["total_tokens"]
+        tokens_prompt = response["usage"]["prompt_tokens"]
+        tokens_completion = tokens_total - tokens_prompt
+        price = round((tokens_prompt * pricing[model][0] + tokens_completion * pricing[model][1]) / 1000, 2)
+        
+        log.success(
+            f"Generation of [bold]{truncate_text(message.text)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
+        
+        msg = response["choices"][0]["message"]
+        await message.delete()
+        if msg["content"]:
+            if tokens_completion == 0:
+                await message.answer("📭 Model returned nothing (zero-length text)")
+            else:
+                result = to_html(msg["content"])
+                if len(result) > 3500:
+                    chunked = chunks(result, 3500)
+                    for chunk in chunked:
+                        await message.answer(chunk, parse_mode="html")
+                else:
+                    await message.answer(result, parse_mode="html")
+
+            await message.answer(
+                f"📊 Used tokens *{tokens_total}* \(*{tokens_prompt}* prompt, *{tokens_completion}* completion\)\n" + \
+                f"⌛ Time spent *{escape(spent)}s*\n" + \
+                f"💸 Approximate price: *{escape(price)}$*",
+                parse_mode="MarkdownV2")
+            
+            db.create_message(selected_chats[message.chat.id], "assistant", msg["content"])
+        elif msg["tool_calls"]:
+            calls = msg["tool_calls"]
+            db.create_message(selected_chats[message.chat.id], "assistant", None, calls)
+            for call in calls:
+                func = call['function']
+                args = json.loads(func["arguments"])
+                log.info(f"Calling {func['name']} with {func['arguments']}")
+                message.answer(f"🔧 Using {func['name']}")
+                db.create_message(selected_chats[message.chat.id], "tool", await py_functions[func["name"]](args), call_id=call["id"], function_name=func["name"])
+            await generate_result(message, level+1)
+        else:
+            log.error("Empty message!..")
+            return
+
+    except Exception as e:
+        log.error(
+            f"Caught exception [bold]{type(e).__name__}[/] ({'. '.join(e.args)}) on line [bold]{e.__traceback__.tb_lineno}[/]")
+        log.console.print_exception()
+        await message.answer(f"❌ Error: `{type(e).__name__} ({'. '.join(e.args)})`", parse_mode="MarkdownV2")
 
 
 @dp.message_handler(content_types=["text", "photo"])
@@ -348,61 +434,18 @@ async def on_message(message: types.Message):
             buffer = BytesIO()
             await photo.download(destination_file=buffer)
             img_str = str(base64.b64encode(buffer.getvalue()), encoding="utf8")
-            chats[message.from_id].append({
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}
-                ]
-            })
+            db.create_message(selected_chats[message.from_id], 
+                              "user", 
+                              [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}])
     
-    if message.from_id not in chats.keys():
-        chats[message.from_id] = []
-        db_chats[message.from_id] = db.create_chat(await create_title(message.text or message.caption), message.from_id)
+    if message.from_id not in selected_chats.keys():
+        selected_chats[message.from_id] = db.create_chat(await create_title(message.text or message.caption), message.from_id).uid
         if system_message is not None:
-            chats[message.from_id].append({"role": "system", "content": system_message})
+            db.create_message(selected_chats[message.from_id], "system", system_message)
 
-    chats[message.from_id].append({"role": "user", "content": message.text or message.caption})
-    db.create_message(message.text or message.caption, "user", db_chats[message.from_id].uid)
-
+    db.create_message(selected_chats[message.from_id], "user", message.text or message.caption)
     log.info(f"Starting generation from [bold]{message.from_user.full_name} ({message.from_id})[/] with prompt [bold]{truncate_text(message.text)}[/]")
-    try:
-        start = datetime.now()
-        response = await openai.ChatCompletion.acreate(
-            model=model,
-            messages=chats[message.from_id],
-            max_tokens=2048
-        )
-        spent = str(round((datetime.now() - start).total_seconds(), 2))
-        tokens_total = response["usage"]["total_tokens"]
-        tokens_prompt = response["usage"]["prompt_tokens"]
-        tokens_completion = tokens_total - tokens_prompt
-        price = round((tokens_prompt * pricing[model][0] + tokens_completion * pricing[model][1]) / 1000, 2)
-        
-        log.success(
-            f"Generation of [bold]{truncate_text(message.text)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
-        if tokens_completion == 0:
-            await new.edit_text("📭 Model returned nothing (zero-length text)")
-        else:
-            result = to_html(response["choices"][0]["message"]["content"])
-            if len(result) > 3500:
-                chunked = chunks(result, 3500)
-                await new.edit_text(chunked[0], parse_mode="html")
-                for chunk in chunked[1:]:
-                    await new.answer(chunk, parse_mode="html")
-            else:
-                await new.edit_text(result, parse_mode="html")
-
-        await message.answer(
-            f"📊 Used tokens *{tokens_total}* \(*{tokens_prompt}* prompt, *{tokens_completion}* completion\)\n" + \
-            f"⌛ Time spent *{escape(spent)}s*\n" + \
-            f"💸 Approximate price: *{escape(price)}$*",
-            parse_mode="MarkdownV2")
-        chats[message.from_id].append(response["choices"][0]["message"])
-        db.create_message(response["choices"][0]["message"]["content"], "assistant", db_chats[message.from_id].uid)
-    except Exception as e:
-        log.error(
-            f"Caught exception [bold]{type(e).__name__}[/] ({'. '.join(e.args)}) on line [bold]{e.__traceback__.tb_lineno}[/]")
-        await new.edit_text(f"❌ Error: `{type(e).__name__} ({'. '.join(e.args)})`", parse_mode="MarkdownV2")
+    await generate_result(new)
 
 
 def main():

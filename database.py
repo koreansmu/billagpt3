@@ -1,114 +1,160 @@
-import sqlite3
+import json
 
+from os.path import exists
 from typing import Optional, List, Union
-from datetime import datetime
 
 
-class Message():
-    def __init__(self, message: str, chat_id: int, author: str, created_at: datetime = None, uid: int = -1) -> None:
-        self.message = message
-        self.chat_id = chat_id
-        self.author = author
-        self.created_at = created_at if created_at is not None else datetime.now()
-        self.uid = uid
-    
-
-    def pack(self) -> dict:
-        return {
-            "role": self.author,
-            "content": self.message
-        }
+class Function(dict):
+    def __init__(self, name: str, arguments: str):
+        super().__init__({"name": name, "arguments": arguments})
 
 
-class Chat():
-    def __init__(self, title: str, owner: int, created_at: datetime = None, last_accessed: datetime = None, uid: int = -1) -> None:
-        self.title = title
-        self.owner = owner
-        self.created_at = created_at if created_at is not None else datetime.now()
-        self.last_accessed = last_accessed if last_accessed is not None else datetime.now()
-        self.uid = uid
+    @property
+    def name(self) -> str:
+        return self["name"]
+
+
+    @property
+    def arguments(self) -> dict:
+        return json.loads(self["arguments"])
+
+
+class ToolCall(dict):
+    def __init__(self, id: str, type: str, function: Union[dict, Function]) -> None:
+        if not isinstance(function, Function):
+            function = Function(**function)
+        super().__init__({"id": id, "type": type, "function": function})
+
+
+    @property
+    def id(self) -> str:
+        return self["id"]
+
+
+    @property
+    def type(self) -> str:
+        return self["type"]
+
+
+    @property
+    def function(self) -> Function:
+        return self["function"]
+
+
+class Message(dict):
+    def __init__(self, role: str, content: Optional[str], tool_calls: Optional[List[Union[dict, ToolCall]]] = None, tool_call_id: Optional[str] = None, name: Optional[str] = None) -> None:
+        if tool_calls is not None and len(tool_calls) > 0 and not isinstance(tool_calls[0], ToolCall):
+            tool_calls = list(map(lambda t: ToolCall(**t), tool_calls))
+        if tool_calls:
+            super().__init__({"role": role, "content": content, "tool_calls": tool_calls})
+        elif tool_call_id and name:
+            super().__init__({"role": role, "content": content, "tool_call_id": tool_call_id, "name": name})
+        else:
+            super().__init__({"role": role, "content": content})
+
+
+    @property
+    def role(self) -> Optional[str]:
+        return self["role"]
+
+
+    @property
+    def content(self) -> Optional[str]:
+        return self["content"]
+
+
+    @property
+    def tool_calls(self) -> Optional[List[ToolCall]]:
+        return self["tool_calls"]
+
+
+class Chat(dict):  # TODO: created_at, accessed_at, model
+    def __init__(self, uid: int, owner: int, title: Optional[str], messages: List[Union[dict, Message]] = []) -> None:
+        if len(messages) > 0 and not isinstance(messages[0], Message):
+            messages = list(map(lambda m: Message(**m), messages))
+        super().__init__({"uid": uid, "owner": owner, "title": title, "messages": messages})
+
+
+    @property
+    def uid(self) -> int:
+        return self["uid"]
+
+
+    @property
+    def owner(self) -> int:
+        return self["owner"]
+
+
+    @property
+    def title(self) -> str:
+        return self["title"]
+
+
+    @property
+    def messages(self) -> List[Message]:
+        return self["messages"]
 
 
 class Database():
-    def __init__(self, path: str = "messages.db") -> None:
-        self.con = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
-        self.cur = self.con.cursor()
+    chats: List[Chat] = []
+    path = ""
 
-        self.cur.execute("""CREATE TABLE IF NOT EXISTS message (
-            message TEXT NOT NULL,
-            chat_id INTEGER NOT NULL,
-            author VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            uid INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT
-        );""")
-        self.cur.execute("""CREATE TABLE IF NOT EXISTS chat (
-            title VARCHAR(255) NOT NULL,
-            owner INTEGER NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_accessed TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            uid INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT
-        );""")
-        self.con.commit()
+    def __init__(self, path: str = "messages.json") -> None:
+        self.path = path
+        if not exists(path):
+            with open(path, "w") as f:
+                f.write("[]")
+        with open(path) as f:
+            self.chats = list(map(lambda c: Chat(**c), json.load(f)))
+
+
+    def commit(self) -> None:
+        with open(self.path, "w") as f:
+            json.dump(self.chats, f, indent=4)
 
 
     def chat_exists(self, uid: int) -> bool:
-        self.cur.execute("SELECT * FROM chat WHERE uid = ?", (uid,))
-        return len(self.cur.fetchall()) > 0
+        return len(len(filter(lambda c: c.owner == uid, self.chats))) > 0
 
 
     def create_chat(self, title: str, owner: int) -> Chat:
-        self.cur.execute("INSERT INTO chat (title, owner) VALUES (?, ?)", (title, owner))
-        uid = self.cur.lastrowid
-        self.con.commit()
-        return self.get_chat(uid)
-
-
-    def store_chat(self, chat: Chat) -> Chat:
-        self.create_chat(chat.title, chat.owner)
-        return chat
+        new_id = 0
+        if len(self.chats) > 0:
+            new_id = max(map(lambda c: c.uid, self.chats)) + 1
+        new_chat = Chat(new_id, owner, title)
+        self.chats.append(new_chat)
+        self.commit()
+        return new_chat
 
 
     def get_chat(self, uid: int) -> Optional[Chat]:
-        self.cur.execute("SELECT * FROM chat WHERE uid = ?", (uid,))
-        if (fetch := self.cur.fetchone()) is None:
+        result = list(filter(lambda c: c.uid == uid, self.chats))
+        if len(result) > 0:
+            return result[0]
+        else:
             return None
-        return Chat(*fetch)
 
 
     def get_chats(self, owner: int) -> List[Chat]:
-        self.cur.execute("SELECT * FROM chat WHERE owner = ? ORDER BY last_accessed DESC", (owner,))
-        return list(map(lambda c: Chat(*c), self.cur.fetchall()))
+        return list(filter(lambda c: c.owner == owner, self.chats))
 
-    
+
     def delete_chat(self, uid: int) -> None:
         if not self.chat_exists(uid):
             raise ValueError(f"Chat with uid {uid} does not exist")
-        
-        self.cur.execute("DELETE FROM chat WHERE uid = ?", (uid,)) \
-                .execute("DELETE FROM message WHERE chat_id = ?", (uid,))
-        self.con.commit()
+        self.chats = list(filter(lambda c: c.uid != uid, self.chats))
+        self.commit()
 
 
-    def create_message(self, message: str, author: str, chat_id: int) -> Message:
-        self.cur.execute("INSERT INTO message (message, author, chat_id) VALUES (?, ?, ?)", (message, author, chat_id))
-        uid = self.cur.lastrowid
-        self.cur.execute("UPDATE chat SET last_accessed = CURRENT_TIMESTAMP WHERE uid = ?", (chat_id,))
-        self.con.commit()
-        return self.get_message(uid)
-
-
-    def store_message(self, message: Message) -> Message:
-        self.create_message(message.chat_id, message.message)
+    def create_message(self, chat_id: int, author: str, message: Optional[Union[str, dict]] = None, tool_calls: Optional[List[ToolCall]] = None, call_id: Optional[str] = None, function_name: Optional[str] = None) -> Message:
+        message = Message(author, message, tool_calls, call_id, function_name)
+        self.get_chat(chat_id).messages.append(message)
+        self.commit()
         return message
 
 
-    def get_message(self, uid: int) -> Message:
-        self.cur.execute("SELECT * FROM message WHERE uid = ?", (uid,))
-        if (fetch := self.cur.fetchone()) is None:
-            return None
-        return Message(*fetch)
-
-
     def get_messages(self, chat_id: int) -> List[Message]:
-        self.cur.execute("SELECT * FROM message WHERE chat_id = ? ORDER BY created_at ASC", (chat_id,))
-        return list(map(lambda m: Message(*m), self.cur.fetchall()))
+        if chat := self.get_chat(chat_id):
+            return chat.messages
+        else:
+            return []
