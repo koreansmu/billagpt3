@@ -393,16 +393,17 @@ async def generate_result(message: types.Message, level: int = 0):
                 f"💸 Approximate price: *{escape(price)}$*",
                 parse_mode="MarkdownV2")
             
-            db.create_message(selected_chats[message.chat.id], "assistant", msg["content"])
+            db.create_message(selected_chats[message.chat.id], "assistant", content=msg["content"])
         elif msg["tool_calls"]:
             calls = msg["tool_calls"]
-            db.create_message(selected_chats[message.chat.id], "assistant", None, calls)
+            db.create_message(selected_chats[message.chat.id], "assistant", tool_calls=calls)
             for call in calls:
                 func = call['function']
                 args = json.loads(func["arguments"])
                 log.info(f"Calling {func['name']} with {func['arguments']}")
                 message.answer(f"🔧 Using {func['name']}")
-                db.create_message(selected_chats[message.chat.id], "tool", await py_functions[func["name"]](args), call_id=call["id"], function_name=func["name"])
+                db.create_message(selected_chats[message.chat.id], "tool", 
+                                  content=await py_functions[func["name"]](args), call_id=call["id"], function_name=func["name"])
             await generate_result(message, level+1)
         else:
             log.error("Empty message!..")
@@ -434,16 +435,15 @@ async def on_message(message: types.Message):
             buffer = BytesIO()
             await photo.download(destination_file=buffer)
             img_str = str(base64.b64encode(buffer.getvalue()), encoding="utf8")
-            db.create_message(selected_chats[message.from_id], 
-                              "user", 
-                              [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}])
+            db.create_message(selected_chats[message.from_id], "user",
+                              content=[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}])  # TODO: improve code
     
     if message.from_id not in selected_chats.keys():
         selected_chats[message.from_id] = db.create_chat(await create_title(message.text or message.caption), message.from_id).uid
         if system_message is not None:
-            db.create_message(selected_chats[message.from_id], "system", system_message)
+            db.create_message(selected_chats[message.from_id], "system", content=system_message)
 
-    db.create_message(selected_chats[message.from_id], "user", message.text or message.caption)
+    db.create_message(selected_chats[message.from_id], "user", content = message.text or message.caption)
     log.info(f"Starting generation from [bold]{message.from_user.full_name} ({message.from_id})[/] with prompt [bold]{truncate_text(message.text)}[/]")
     await generate_result(new)
 

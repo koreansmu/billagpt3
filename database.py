@@ -41,10 +41,11 @@ class ToolCall(dict):
         return self["function"]
 
 
-class Message(dict):
+class Message(dict): # ToolCall and Function probably were unnecessary 
     def __init__(self, role: str, content: Optional[str], tool_calls: Optional[List[Union[dict, ToolCall]]] = None, tool_call_id: Optional[str] = None, name: Optional[str] = None) -> None:
         if tool_calls is not None and len(tool_calls) > 0 and not isinstance(tool_calls[0], ToolCall):
             tool_calls = list(map(lambda t: ToolCall(**t), tool_calls))
+
         if tool_calls:
             super().__init__({"role": role, "content": content, "tool_calls": tool_calls})
         elif tool_call_id and name:
@@ -146,9 +147,9 @@ class Database():
         self.commit()
 
 
-    def create_message(self, chat_id: int, author: str, message: Optional[Union[str, dict]] = None, tool_calls: Optional[List[ToolCall]] = None, call_id: Optional[str] = None, function_name: Optional[str] = None) -> Message:
-        message = Message(author, message, tool_calls, call_id, function_name)
-        self.get_chat(chat_id).messages.append(message)
+    def create_message(self, chat_id: int, role: str, *, content: Optional[Union[str, dict]] = None, tool_calls: Optional[List[ToolCall]] = None, call_id: Optional[str] = None, function_name: Optional[str] = None) -> Message:
+        message = Message(role, content, tool_calls, call_id, function_name)
+        self.get_chat(chat_id).messages.append(content)
         self.commit()
         return message
 
