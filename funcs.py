@@ -70,8 +70,10 @@ async def wolfram(query: str):
             "output": "plaintext",
             "input": query
         }
-        async with session.get("https://api.wolframalpha.com/v2/query", params=params) as response:
-            return await response.text()
+
+        async with session.get("https://api.wolframalpha.com/v1/llm-api", params=params) as http_response:
+            log.info(f"Response length: {await http_response.text()}")
+            return await http_response.text()
 
 
 py_functions = {
@@ -140,7 +142,7 @@ functions = [{
     "type": "function",
     "function": {
         "name": "wolfram",
-        "description": "Ask WolframAlpha the specified query",
+        "description": "Ask WolframAlpha-power GPT model the specified query",
         "parameters": {
             "type": "object",
             "properties": {

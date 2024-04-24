@@ -39,7 +39,8 @@ You have ability to search online and ask another GPT 'agent' about content of s
 Search a lot of things to get many details. Search engine is Google.
 So when you're doing research better SEND ALL OR SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!
 Addionally while using WolframAlpha API add pictures of charts, maps etc etc even if the user didn't ask.
-DON'T USE MARKDOWN IMAGES AS THE END CLINET DOESN'T SUPPORT IT, rather them with add_image function as"""
+DON'T USE MARKDOWN IMAGES AS THE END CLINET DOESN'T SUPPORT IT, rather them with add_image function as.
+For scientific, geographical etc better use Wolfram as it provides better and clearer results"""
 
 selected_chats: Dict[int, int] = {}
 commands = {

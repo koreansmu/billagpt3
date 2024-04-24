@@ -1,7 +1,11 @@
 import re
 import openai
+import tiktoken
+
+from typing import List
 
 escaped = ["[", "]", "(", ")", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
+encoding = tiktoken.get_encoding("cl100k_base")
 
 
 def truncate_text(text, limit=50):
@@ -98,3 +102,19 @@ def display_function(function: str, args: dict) -> str:
                 return f"🔎 Searching <i>{args['query']}</i>"
         case _:
             return f"🔧 Using <code>{function}</code>"
+
+
+def tokenize(text: str) -> List[int]:
+    return encoding.encode(text)
+
+
+def detokenize(tokens: List[int]) -> str:
+    return encoding.decode(tokens)
+
+
+def total_tokens(text: str) -> int:
+    return len(tokenize(text))
+
+
+def split_text(text: str) -> List[str]:
+    return list(map(detokenize, chunks(tokenize(text), 15000)))
