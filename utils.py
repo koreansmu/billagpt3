@@ -116,5 +116,5 @@ def total_tokens(text: str) -> int:
     return len(tokenize(text))
 
 
-def split_text(text: str) -> List[str]:
-    return list(map(detokenize, chunks(tokenize(text), 15000)))
+def split_text(text: str, size: int = 10000) -> List[str]:
+    return list(map(detokenize, chunks(tokenize(text), size)))

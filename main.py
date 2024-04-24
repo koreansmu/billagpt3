@@ -307,7 +307,7 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
                     images.append(args["url"])
                     db.create_message(selected_chats[message.chat.id], "tool", content="Done!", call_id=call["id"], function_name="add_image")
                 elif func["name"] in py_functions.keys():
-                    log.info(f"Calling {func['name']} with {func['arguments']}")
+                    log.info(f"Calling [bold]{func['name']}[/] with [bold]{func['arguments']}[/]")
                     await message.answer(display_function(func['name'], args), parse_mode="html", disable_web_page_preview=True)
                     if func["name"] == "ask_webpage":
                         sources.append(args["url"])
