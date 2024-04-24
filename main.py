@@ -19,6 +19,7 @@ from logger import Logger
 # Apis:
 # - WolframAlpha
 # - Reddit
+# - Image search
 #
 # Code:
 # - Cut tokens so the model would not overflow
@@ -31,7 +32,7 @@ dp = Dispatcher(bot)
 db = Database()
 openai.api_key = config["openai_token"]
 
-system_message = "You are very helpful AI assistant. You have ability to search online and ask another GPT 'agent' about content of specified URL. Search a lot of things to get many details. Search engine is Bing So when you're doing research better SEND ALL OF SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!"
+system_message = "You are very helpful AI assistant. You have ability to search online and ask another GPT 'agent' about content of specified URL. Search a lot of things to get many details. Search engine is Google. So when you're doing research better SEND ALL OR SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!"
 selected_chats: Dict[int, int] = {}
 escaped = ['[', ']', '(', ')', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 commands = {
@@ -48,8 +49,8 @@ pricing = {
     "gpt-4-turbo": [0.01, 0.03],
     "gpt-3.5-turbo": [0.0005, 0.0015], 
 }
-model = "gpt-4-turbo"
-# model = "gpt-3.5-turbo"
+# model = "gpt-4-turbo"
+model = "gpt-3.5-turbo"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0"
@@ -151,16 +152,20 @@ async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo") -> st
             return response["choices"][0]["message"]["content"]
 
 
-async def search(query: str):
+async def search(query: str, page: int = 1):
     results = []
     async with aiohttp.ClientSession() as session:
         params = {
             "cx": config["google_search_id"],
             "key": config["google_search_token"],
             "q": query,
+            "start": (page-1)*10+1
         }
         async with session.get("https://content-customsearch.googleapis.com/customsearch/v1", params=params) as response:
-            for item in (await response.json())["items"]:
+            data = await response.json()
+            if "items" not in data.keys():
+                return "[]"
+            for item in data["items"]:
                 results.append({"title": item["title"], "url": item["link"]})
     return json.dumps(results)
 
@@ -193,15 +198,35 @@ functions = [{
 }, {
     "type": "function",
     "function": {
+        "name": "add_image",
+        "description": "Add image to the result from URL. Up to 10 calls total for one message. Use only for necessary images",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL of the image"
+                }
+            },
+            "required": ["url"]
+        }
+    }
+}, {
+    "type": "function",
+    "function": {
         "name": "search",
         "description": "Search a prompt online. Returns 10 arrays of dictionries (url and title). Better send multiple prompts as separate messages at once. Don't use it for general knowledge and obvious, basic questions",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": { # add max results as a parameter 
+                "query": {
                     "type": "string",
                     "description": "The query that will be searched"
                 },
+                "page": {
+                    "type": "integer",
+                    "description": "Page of Google results. Default: 1"
+                }
             },
             "required": ["query"]
         }
@@ -402,13 +427,18 @@ def display_function(function: str, args: dict) -> str:
         case "ask_webpage":
             return f"🌐 Analyzing <a href='{args['url']}'>{parse_domain(args['url'])}</a>"
         case "search":
-            return f"🔎 Searching <i>{args['query']}</i>"
+            if "page" in args.keys():
+                return f"🔎 Searching <i>{args['query']}</i> ({args['page']})"
+            else:                
+                return f"🔎 Searching <i>{args['query']}</i>"
         case _:
             return f"🔧 Using <code>{function}</code>"
 
 
-async def generate_result(message: types.Message, level: int = 0) -> None:
+async def generate_result(message: types.Message, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
     try:
+        sources: List[str] = sources or []
+        images: List[str] = images or []
         start = datetime.now()
         response = await openai.ChatCompletion.acreate(
             model=model,
@@ -439,6 +469,14 @@ async def generate_result(message: types.Message, level: int = 0) -> None:
                 else:
                     await message.answer(result, parse_mode="html")
 
+            if len(images) > 0:
+                images = list(map(lambda i: types.InputMediaPhoto(i), images))
+                await message.answer_media_group(images)
+            if len(sources) > 0:
+                await message.answer("<b>📜 Sources</b>\n" + \
+                                    "\n".join(map(lambda s: f"<a href='{s}'>{parse_domain(s)}</a>", sources)), 
+                                    parse_mode="html", disable_web_page_preview=True)
+
             await message.answer(
                 f"📊 Used tokens *{tokens_total}* \(*{tokens_prompt}* prompt, *{tokens_completion}* completion\)\n" + \
                 f"⌛ Time spent *{escape(spent)}s*\n" + \
@@ -452,16 +490,20 @@ async def generate_result(message: types.Message, level: int = 0) -> None:
             for call in calls:
                 func = call['function']
                 args = json.loads(func["arguments"])
-                if func["name"] in py_functions.keys():
+                if func["name"] == "add_image":
+                    images.append(args["url"])
+                elif func["name"] in py_functions.keys():
                     log.info(f"Calling {func['name']} with {func['arguments']}")
                     await message.answer(display_function(func['name'], args), parse_mode="html", disable_web_page_preview=True)
+                    if func["name"] == "ask_webpage":
+                        sources.append(args["url"])
                     db.create_message(selected_chats[message.chat.id], "tool", 
-                                    content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
+                                      content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
                 else:
                     log.warn(f"GPT tried to call non-existing {func['name']}")
-                    await message.answer(f"GPT tried to call non-existing <code>{func['name']}</code>", parse_mode="html")
+                    await message.answer(f"❌ GPT tried to call non-existing <code>{func['name']}</code>", parse_mode="html")
                     db.create_message(selected_chats[message.chat.id], "tool", content=f"Function {func['name']} not found!", call_id=call["id"], function_name=func["name"])
-            await generate_result(message, level+1)
+            await generate_result(message, level+1, sources, images)
         else:
             log.error("Empty message!..")
             return
