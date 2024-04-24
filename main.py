@@ -34,7 +34,13 @@ dp = Dispatcher(bot)
 db = Database()
 openai.api_key = config["openai_token"]
 
-system_message = "You are very helpful AI assistant. You have ability to search online and ask another GPT 'agent' about content of specified URL. Search a lot of things to get many details. Search engine is Google. So when you're doing research better SEND ALL OR SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!"
+system_message = """You are very helpful AI assistant that provides comprehensive answers.
+You have ability to search online and ask another GPT 'agent' about content of specified URL. 
+Search a lot of things to get many details. Search engine is Google.
+So when you're doing research better SEND ALL OR SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!
+Addionally while using WolframAlpha API add pictures of charts, maps etc etc even if the user didn't ask.
+DON'T USE MARKDOWN IMAGES AS THE END CLINET DOESN'T SUPPORT IT, rather them with add_image function as"""
+
 selected_chats: Dict[int, int] = {}
 commands = {
     "help": "Help message",
@@ -241,7 +247,7 @@ async def on_chats(message: types.Message):
     await message.answer("Your chats", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
-async def generate_result(message: types.Message, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
+async def generate_result(message: types.Message, start_prompt: str, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
     try:
         sources: List[str] = sources or []
         images: List[str] = images or []
@@ -259,7 +265,7 @@ async def generate_result(message: types.Message, level: int = 0, sources: Optio
         price = round((tokens_prompt * pricing[model][0] + tokens_completion * pricing[model][1]) / 1000, 2)
         
         log.success(
-            f"Generation of [bold]{truncate_text(message.text)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
+            f"Generation of [bold]{truncate_text(start_prompt)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
         
         msg = response["choices"][0]["message"]
         if msg["content"]:
@@ -271,9 +277,9 @@ async def generate_result(message: types.Message, level: int = 0, sources: Optio
                 if len(result) > 3500:
                     chunked = chunks(result, 3500)
                     for chunk in chunked:
-                        await message.answer(chunk, parse_mode="html")
+                        await message.answer(chunk, parse_mode="html", disable_web_page_preview=True)
                 else:
-                    await message.answer(result, parse_mode="html")
+                    await message.answer(result, parse_mode="html", disable_web_page_preview=True)
 
             if len(images) > 0:
                 images = list(map(lambda i: types.InputMediaPhoto(i), images))
@@ -298,6 +304,7 @@ async def generate_result(message: types.Message, level: int = 0, sources: Optio
                 args = json.loads(func["arguments"])
                 if func["name"] == "add_image":
                     images.append(args["url"])
+                    db.create_message(selected_chats[message.chat.id], "tool", content="Done!", call_id=call["id"], function_name="add_image")
                 elif func["name"] in py_functions.keys():
                     log.info(f"Calling {func['name']} with {func['arguments']}")
                     await message.answer(display_function(func['name'], args), parse_mode="html", disable_web_page_preview=True)
@@ -309,7 +316,7 @@ async def generate_result(message: types.Message, level: int = 0, sources: Optio
                     log.warn(f"GPT tried to call non-existing {func['name']}")
                     await message.answer(f"❌ GPT tried to call non-existing <code>{func['name']}</code>", parse_mode="html")
                     db.create_message(selected_chats[message.chat.id], "tool", content=f"Function {func['name']} not found!", call_id=call["id"], function_name=func["name"])
-            await generate_result(message, level+1, sources, images)
+            await generate_result(message, start_prompt, level+1, sources, images)
         else:
             log.error("Empty message!..")
             return
@@ -352,7 +359,7 @@ async def on_message(message: types.Message):
 
     db.create_message(selected_chats[message.from_id], "user", content = message.text or message.caption)
     log.info(f"Starting generation from [bold]{message.from_user.full_name} ({message.from_id})[/] with prompt [bold]{truncate_text(message.text)}[/]")
-    await generate_result(new)
+    await generate_result(new, message.text)
 
 
 def main():

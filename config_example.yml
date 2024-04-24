@@ -2,4 +2,5 @@ bot_token: "BOT_TOKEN"
 openai_token: "sk-OPENAI_TOKEN"
 google_search_token: "GOOGLE_SEARCH_TOKEN"
 google_search_id: "GOOGLE_SEARCH_ID"
+wolfram_token: "WOLFRAM_TOKEN"
 whitelist: []

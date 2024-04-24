@@ -63,9 +63,21 @@ async def search(query: str, page: int = 1):
     return json.dumps(results)
 
 
+async def wolfram(query: str):
+    async with aiohttp.ClientSession() as session:
+        params = {
+            "appid": config["wolfram_token"],
+            "output": "plaintext",
+            "input": query
+        }
+        async with session.get("https://api.wolframalpha.com/v2/query", params=params) as response:
+            return await response.text()
+
+
 py_functions = {
     "ask_webpage": ask_webpage,
-    "search": search
+    "search": search,
+    "wolfram": wolfram
 }
 
 functions = [{
@@ -119,6 +131,22 @@ functions = [{
                 "page": {
                     "type": "integer",
                     "description": "Page of Google results. Default: 1"
+                }
+            },
+            "required": ["query"]
+        }
+    }
+}, {
+    "type": "function",
+    "function": {
+        "name": "wolfram",
+        "description": "Ask WolframAlpha the specified query",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The query that will be asked"
                 }
             },
             "required": ["query"]

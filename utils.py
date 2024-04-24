@@ -1,7 +1,7 @@
 import re
 import openai
 
-escaped = ['[', ']', '(', ')', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+escaped = ["[", "]", "(", ")", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
 
 
 def truncate_text(text, limit=50):
@@ -16,22 +16,22 @@ def chunks(lst: list, n: int) -> list:
 
 def to_html(markdown_text: str) -> str:
     html_text = markdown_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    html_text = re.sub(r'\*\*\*(.*?)\*\*\*', r'<b><i>\1</i></b>', html_text)  # bold and italic sim.
-    html_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_text)  # bold
-    html_text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_text)  # italic
+    html_text = re.sub(r"\*\*\*(.*?)\*\*\*", r"<b><i>\1</i></b>", html_text)  # bold and italic sim.
+    html_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", html_text)  # bold
+    html_text = re.sub(r"\*(.*?)\*", r"<i>\1</i>", html_text)  # italic
     
     def replace_code_blocks(match):
-        language = match.group(1) or ''
+        language = match.group(1) or ""
         code = match.group(2)
-        return f'<pre><code class="language-{language}">{code}</code></pre>'    
-    html_text = re.sub(r'```(\w+)?\n(.*?)\n```', replace_code_blocks, html_text, flags=re.DOTALL)  # code block
+        return f"<pre><code class='language-{language}'>{code}</code></pre>"    
+    html_text = re.sub(r"```(\w+)?\n(.*?)\n```", replace_code_blocks, html_text, flags=re.DOTALL)  # code block
     
-    html_text = re.sub(r'`(.*?)`', r'<code>\1</code>', html_text)  # inline code
+    html_text = re.sub(r"`(.*?)`", r"<code>\1</code>", html_text)  # inline code
 
-    html_text = re.sub(r'^> (.*?)$', r'<blockquote>\1</blockquote>', html_text, flags=re.MULTILINE)  # quote
-    #html_text = re.sub(r'!\[(.*?)\]\((.*?)\)', r'<img src="\2" alt="\1">', html_text)
-    html_text = re.sub(r'\[(.*?)\]\((.*?)\)', r'<a href="\2">\1</a>', html_text)  # link
-    return html_text
+    html_text = re.sub(r"^> (.*?)$", r"<blockquote>\1</blockquote>", html_text, flags=re.MULTILINE)  # quote
+    #html_text = re.sub(r"!\[(.*?)\]\((.*?)\)", r"<img src="\2" alt="\1">", html_text)
+    html_text = re.sub(r"\[(.*?)\]\((.*?)\)", r"<a href='\2'>\1</a>", html_text)  # link
+    return unescape(html_text)
 
 
 def escape(string: str, formatting=False) -> str:
@@ -45,6 +45,26 @@ def escape(string: str, formatting=False) -> str:
     for c in escaped:
         string = string.replace(c, f"\\{c}")
     return string
+
+
+import re
+
+def unescape(text):
+    escaped_characters = {
+        r"\[": "[", r"\]": "]",
+        r"\(": "(", r"\)": ")",
+        r"\{": "{", r"\}": "}",
+        r"\<": "<", r"\>": ">",
+        r"\#": "#", r"\*": "*", r"\_": "_", 
+        r"\+": "+", r"\-": "-", r"\=": "=",
+        r"\\": "\\", r"\|": "|",
+        r"\.": ".", r"\!": "!",
+    }
+
+    for escaped, unescaped in escaped_characters.items():
+        text = text.replace(escaped, unescaped)
+
+    return text
 
 
 async def create_title(message: str) -> str:
