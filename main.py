@@ -113,7 +113,7 @@ async def create_title(message: str) -> str:
     return response["choices"][0]["message"]["content"]
 
 
-async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo-0125") -> str:
+async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo") -> str:
     async with aiohttp.ClientSession(headers=headers) as session:
         log.info(f"Sending GET request to [bold]{url}[/]")
         async with session.get(url) as response:
@@ -151,12 +151,17 @@ async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo-0125") 
             return response["choices"][0]["message"]["content"]
 
 
-async def search(prompt: str):
+async def search(query: str):
     results = []
-    async with aiohttp.ClientSession(headers={"Ocp-Apim-Subscription-Key": config["bing_token"]}) as session:
-        async with session.get("https://api.bing.microsoft.com/v7.0/search", params={"q": prompt}) as response:
-            for result in (await response.json())["webPages"]["value"]:
-                results.append({"url": result["url"], "title": result["name"]})
+    async with aiohttp.ClientSession() as session:
+        params = {
+            "cx": config["google_search_id"],
+            "key": config["google_search_token"],
+            "q": query,
+        }
+        async with session.get("https://content-customsearch.googleapis.com/customsearch/v1", params=params) as response:
+            for item in (await response.json())["items"]:
+                results.append({"title": item["title"], "url": item["link"]})
     return json.dumps(results)
 
 
@@ -193,12 +198,12 @@ functions = [{
         "parameters": {
             "type": "object",
             "properties": {
-                "prompt": { # add max results as a parameter 
+                "query": { # add max results as a parameter 
                     "type": "string",
-                    "description": "The prompt that would be searched"
+                    "description": "The query that will be searched"
                 },
             },
-            "required": ["prompt"]
+            "required": ["query"]
         }
     }
 }]
@@ -397,7 +402,7 @@ def display_function(function: str, args: dict) -> str:
         case "ask_webpage":
             return f"🌐 Analyzing <a href='{args['url']}'>{parse_domain(args['url'])}</a>"
         case "search":
-            return f"🔎 Searching <i>{args['prompt']}</i>"
+            return f"🔎 Searching <i>{args['query']}</i>"
         case _:
             return f"🔧 Using <code>{function}</code>"
 
