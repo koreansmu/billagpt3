@@ -19,13 +19,13 @@ from utils import *
 
 # === TODO ===
 # Apis:
-# - WolframAlpha
 # - Reddit
 # - Image search
 #
 # Code:
 # - Cut tokens so the model would not overflow
 # - Ability to select model (default/in-chat)
+# - Admin panel
 
 log = Logger()
 config = load(open("config.yml"), Loader=Loader)
