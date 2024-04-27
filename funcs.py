@@ -4,7 +4,7 @@ import json
 
 from bs4 import BeautifulSoup
 
-from main import log, headers, config, pricing
+from const import log, headers, config, pricing
 from utils import truncate_text, total_tokens, split_text
 
 async def ask_webpage(url: str, prompt: str, model: str = "gpt-3.5-turbo") -> str:

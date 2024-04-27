@@ -1,20 +1,15 @@
-import aiohttp
-import asyncio
 import base64
 import openai
-import re
 
 from aiogram import Bot, Dispatcher, executor, types
-from bs4 import BeautifulSoup
 from datetime import datetime
 from io import BytesIO
 from math import ceil
 from typing import Dict
-from yaml import load, Loader
 
+from const import *
 from database import *
 from funcs import *
-from logger import Logger
 from utils import *
 
 # === TODO ===
@@ -27,42 +22,12 @@ from utils import *
 # - Ability to select model (default/in-chat)
 # - Admin panel
 
-log = Logger()
-config = load(open("config.yml"), Loader=Loader)
 bot = Bot(config["bot_token"])
 dp = Dispatcher(bot)
 db = Database()
 openai.api_key = config["openai_token"]
 
-system_message = """You are very helpful AI assistant that provides comprehensive answers.
-You have ability to search online and ask another GPT 'agent' about content of specified URL. 
-Search a lot of things to get many details. Search engine is Google.
-So when you're doing research better SEND ALL OR SOME OF THE LINKS into ask_webpage to get more knowledge and to know the topic deeper!
-Addionally while using WolframAlpha API add pictures of charts, maps etc etc even if the user didn't ask.
-DON'T USE MARKDOWN IMAGES AS THE END CLINET DOESN'T SUPPORT IT, rather them with add_image function as.
-For scientific, geographical etc better use Wolfram as it provides better and clearer results"""
-
 selected_chats: Dict[int, int] = {}
-commands = {
-    "help": "Help message",
-    "start": "Start message",
-    "reset": "Clear current chat",
-    "delete": "Delete last to messages",
-    "regen": "Regenerate last message"
-    # "sql": "Raw SQL command"
-}
-
-# model -> [in, out]
-pricing = { 
-    "gpt-4-turbo": [0.01, 0.03],
-    "gpt-3.5-turbo": [0.0005, 0.0015], 
-}
-# model = "gpt-4-turbo"
-model = "gpt-3.5-turbo"
-
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0"
-}
 
 
 @dp.callback_query_handler()
@@ -246,6 +211,30 @@ async def on_chats(message: types.Message):
         types.InlineKeyboardButton(">>", callback_data="chatpage_1") if len(chats) > 5 else types.InlineKeyboardButton("•", callback_data="donothing")
     ])
     await message.answer("Your chats", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@dp.message_handler(commands=["model"])
+async def on_model(message: types.Message):
+    if message.from_id not in config["whitelist"]:
+        await message.answer("⚠️ Access denied!")
+        return
+    
+    if not db.user_exists(message.from_id):
+        db.create_user(message.from_id)
+    
+    user = db.get_user(message.from_id)
+    if args := message.get_args():
+        if args not in models.keys():
+            await message.answer(f"❌ Model <b>{args}</b> not found!", parse_mode="html")
+            return
+        if not user.has_gpt4 and args.lower() == "gpt-4":
+            await message.answer(f"⚠️ You don't have access to <b>{args}</b>!")
+            return
+        user["model"] = models[args.lower()]
+        db.commit()
+    else:
+        await message.answer(f"🤖 Current model <b>{db.get}</b>" + \
+                       f"📃 Available {map(', '.join(lambda s: s.lower(), models.keys()))}")
 
 
 async def generate_result(message: types.Message, start_prompt: str, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:

@@ -4,7 +4,7 @@ from datetime import datetime
 from os.path import exists
 from typing import Optional, List, Union
 
-from main import pricing
+from const import pricing
 
 class Message(dict):
     def __init__(self, role: str, content: Optional[str], tool_calls: Optional[List[dict]] = None, tool_call_id: Optional[str] = None, name: Optional[str] = None) -> None:
@@ -85,7 +85,7 @@ class User(dict): # Create more settings
     @property
     def model(self):
         return self["model"]
-    
+
 
     @property
     def has_gpt4(self):
@@ -101,7 +101,7 @@ class Database():
         self.path = path
         if not exists(path):
             with open(path, "w") as f:
-                f.write("{}")
+                json.dump({"users": [], "chats": []}, f)
         with open(path) as f:
             data = json.load(f)
             self.chats = list(map(lambda c: Chat(**c), data["chats"]))
@@ -114,10 +114,10 @@ class Database():
 
 
     def user_exists(self, uid: int) -> bool:
-        return len(len(filter(lambda u: u.uid == uid, self.users))) > 0
+        return len(list(filter(lambda u: u.uid == uid, self.users))) > 0
 
 
-    def create_user(self, uid, model: str = "gpt-3.5-turbo", has_gpt4: bool = False)-> User:
+    def create_user(self, uid: int, model: str = "gpt-3.5-turbo", has_gpt4: bool = False) -> User:
         if model not in pricing.keys():
             raise ValueError(f"Model {model} not found")
         if len(list(filter(lambda u: u.uid == uid, self.users))) > 0:
@@ -125,6 +125,14 @@ class Database():
         new_user = User(uid, model, has_gpt4)
         self.users.append(new_user)
         return new_user
+
+
+    def get_user(self, uid: int) -> Optional[User]:
+        result = list(filter(lambda u: u.uid == uid, self.users))
+        if len(result) > 0:
+            return result[0]
+        else:
+            return None
 
 
     def chat_exists(self, uid: int) -> bool:
