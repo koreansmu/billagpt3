@@ -4,6 +4,8 @@ import tiktoken
 
 from typing import List
 
+os.environ["TIKTOKEN_CACHE_DIR"] = "tiktoken_cache/"
+
 escaped = ["[", "]", "(", ")", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
 encoding = tiktoken.get_encoding("cl100k_base")
 
