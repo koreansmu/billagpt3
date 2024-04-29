@@ -238,12 +238,13 @@ async def on_model(message: types.Message):
 
 
 async def generate_result(message: types.Message, start_prompt: str, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
+    user = db.get_user(message.chat.id)
     try:
         sources: List[str] = sources or []
         images: List[str] = images or []
         start = datetime.now()
         response = await openai.ChatCompletion.acreate(
-            model=model,
+            model=user.model,
             messages=db.get_messages(selected_chats[message.chat.id]),
             max_tokens=2048,
             tools=functions
@@ -252,7 +253,7 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
         tokens_total = response["usage"]["total_tokens"]
         tokens_prompt = response["usage"]["prompt_tokens"]
         tokens_completion = tokens_total - tokens_prompt
-        price = round((tokens_prompt * pricing[model][0] + tokens_completion * pricing[model][1]) / 1000, 2)
+        price = round((tokens_prompt * pricing[user.model][0] + tokens_completion * pricing[user.model][1]) / 1000, 2)
         
         log.success(
             f"Generation of [bold]{truncate_text(start_prompt)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
@@ -327,10 +328,14 @@ async def on_message(message: types.Message):
         await message.answer("⚠️ Access denied!")
         return
 
+    if not db.user_exists(message.from_id):
+        db.create_user(message.from_id)
+
     new = await message.answer("🧠 Starting generating...")
+    user = db.get_user(message)
 
     if len(message.photo):
-        if model != "gpt-4-turbo":
+        if user.model != "gpt-4-turbo":
             await new.edit_text("❌ Images are not supported in this model")
             return
         for photo in message.photo:
