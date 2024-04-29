@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher, executor, types
 from datetime import datetime
 from io import BytesIO
 from math import ceil
+from random import randint
 from typing import Dict
 
 from const import *
@@ -241,7 +242,7 @@ async def on_model(message: types.Message):
                        f"📃 Available {', '.join(map(lambda s: f'<code>{s.lower()}</code>', pricing.keys()))}", parse_mode="html")
 
 
-async def generate_result(message: types.Message, start_prompt: str, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
+async def generate_result(message: types.Message, start_prompt: str, level: int = 0, call_id: int = randint(0, 65535), sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
     user = db.get_user(message.chat.id)
     try:
         sources: List[str] = sources or []
@@ -259,9 +260,11 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
         tokens_completion = tokens_total - tokens_prompt
         price = round((tokens_prompt * pricing[user.model][0] + tokens_completion * pricing[user.model][1]) / 1000, 2)
         
-        log.success(
-            f"Generation of [bold]{truncate_text(start_prompt)}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
-        
+        if level == 0:
+            log.success(f"Generation of [bold]{truncate_text(start_prompt)}[/] / [bold]0x{call_id:04X}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
+        else:
+            log.info(f"[bold]\[#{level:02d}][/] Sub-call for [bold]{call_id:#08x}[/] is done")
+
         msg = response["choices"][0]["message"]
         if msg["content"]:
             await message.delete()
@@ -311,7 +314,7 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
                     log.warn(f"GPT tried to call non-existing {func['name']}")
                     await message.answer(f"❌ GPT tried to call non-existing <code>{func['name']}</code>", parse_mode="html")
                     db.create_message(selected_chats[message.chat.id], "tool", content=f"Function {func['name']} not found!", call_id=call["id"], function_name=func["name"])
-            await generate_result(message, start_prompt, level+1, sources, images)
+            await generate_result(message, start_prompt, level+1, call_id, sources, images)
         else:
             log.error("Empty message!..")
             return

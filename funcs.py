@@ -91,7 +91,7 @@ async def wolfram(query: str):
         }
 
         async with session.get("https://api.wolframalpha.com/v1/llm-api", params=params) as http_response:
-            log.info(f"Response length: {await http_response.text()}")
+            log.info(f"Response length: [bold]{len(await http_response.text())}[/]")
             return await http_response.text()
 
 
