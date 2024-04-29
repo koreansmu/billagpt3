@@ -19,7 +19,10 @@ from utils import *
 #
 # Code:
 # - Cut tokens so the model would not overflow
-# - Ability to select model (default/in-chat)
+# - Ability to select model
+#   - [Done] Per-user
+#   - Chat
+#   - Website analyzer
 # - Admin panel
 
 bot = Bot(config["bot_token"])
@@ -224,17 +227,18 @@ async def on_model(message: types.Message):
     
     user = db.get_user(message.from_id)
     if args := message.get_args():
-        if args not in models.keys():
+        if args not in pricing.keys():
             await message.answer(f"❌ Model <b>{args}</b> not found!", parse_mode="html")
             return
-        if not user.has_gpt4 and args.lower() == "gpt-4":
-            await message.answer(f"⚠️ You don't have access to <b>{args}</b>!")
+        if not user.has_gpt4 and args.lower() == "gpt-4-turbo":
+            await message.answer(f"⚠️ You don't have access to <b>{args}</b>!", parse_mode="html")
             return
-        user["model"] = models[args.lower()]
+        user["model"] = args
+        await message.answer(f"✅ Model is set to <b>{args}</b>", parse_mode="html")
         db.commit()
     else:
-        await message.answer(f"🤖 Current model <b>{db.get}</b>" + \
-                       f"📃 Available {map(', '.join(lambda s: s.lower(), models.keys()))}")
+        await message.answer(f"🤖 Current model <b>{db.get_user(message.from_id).model}</b>\n" + \
+                       f"📃 Available {', '.join(map(lambda s: f'<code>{s.lower()}</code>', pricing.keys()))}", parse_mode="html")
 
 
 async def generate_result(message: types.Message, start_prompt: str, level: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:

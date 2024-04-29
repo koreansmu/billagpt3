@@ -14,11 +14,6 @@ commands = {
     "model": "Select default GPT model"
 }
 
-models = {
-    "gpt-3.5": "gpt-3.5-turbo",
-    "gpt-4": "gpt-4-turbo"
-}
-
 # model -> [in, out]
 pricing = { 
     "gpt-3.5-turbo": [0.0005, 0.0015], 
