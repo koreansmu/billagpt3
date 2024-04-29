@@ -1,5 +1,6 @@
 import re
 import openai
+import os
 import tiktoken
 
 from typing import List
