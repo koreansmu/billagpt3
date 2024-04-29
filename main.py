@@ -284,6 +284,13 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
                                     "\n".join(map(lambda s: f"<a href='{s}'>{parse_domain(s)}</a>", sources)), 
                                     parse_mode="html", disable_web_page_preview=True)            
             db.create_message(selected_chats[message.chat.id], "assistant", content=msg["content"])
+            if level == 0:
+                log.success(f"Generation of [bold]{truncate_text(start_prompt)}[/] / [bold]0x{call_id:04x}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
+                await message.answer( # TODO: bring price back
+                    f"📊 Used tokens *{tokens_total}*\n" + \
+                    f"⌛ Time spent *{escape(spent)}s*",
+                    parse_mode="MarkdownV2")
+
             return tokens+tokens_total
         elif msg["tool_calls"]:
             calls = msg["tool_calls"]
