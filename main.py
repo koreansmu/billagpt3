@@ -242,9 +242,12 @@ async def on_model(message: types.Message):
                        f"📃 Available {', '.join(map(lambda s: f'<code>{s.lower()}</code>', pricing.keys()))}", parse_mode="html")
 
 
-async def generate_result(message: types.Message, start_prompt: str, level: int = 0, call_id: int = randint(0, 65535), sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
+async def generate_result(message: types.Message, start_prompt: str, level: int = 0, call_id: int = randint(0, 65535), tokens: int = 0, sources: Optional[List[str]] = None, images: Optional[List[str]] = None) -> None:
     user = db.get_user(message.chat.id)
     try:
+        if level == 0:
+            log.info(f"Starting generation from [bold]{message.chat.full_name} ({message.chat.id})[/] with prompt [bold]{truncate_text(start_prompt)}[/] / [bold]0x{call_id:04x}[/] on [bold]{user.model}[/]")
+
         sources: List[str] = sources or []
         images: List[str] = images or []
         start = datetime.now()
@@ -258,12 +261,9 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
         tokens_total = response["usage"]["total_tokens"]
         tokens_prompt = response["usage"]["prompt_tokens"]
         tokens_completion = tokens_total - tokens_prompt
-        price = round((tokens_prompt * pricing[user.model][0] + tokens_completion * pricing[user.model][1]) / 1000, 2)
         
-        if level == 0:
-            log.success(f"Generation of [bold]{truncate_text(start_prompt)}[/] / [bold]0x{call_id:04X}[/] finished. Used [bold]{tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
-        else:
-            log.info(f"[bold]\[#{level:02d}][/] Sub-call for [bold]{call_id:#08x}[/] is done")
+        if level != 0:
+            log.info(f"Sub-call [bold]#{level:02d}[/] for [bold]0x{call_id:04x}[/] is done ([bold]{tokens_total}[/] tokens)")
 
         msg = response["choices"][0]["message"]
         if msg["content"]:
@@ -272,12 +272,9 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
                 await message.answer("📭 Model returned nothing (zero-length text)")
             else:
                 result = to_html(msg["content"])
-                if len(result) > 3500:
-                    chunked = chunks(result, 3500)
-                    for chunk in chunked:
-                        await message.answer(chunk, parse_mode="html", disable_web_page_preview=True)
-                else:
-                    await message.answer(result, parse_mode="html", disable_web_page_preview=True)
+                chunked = chunks(result, 3500)
+                for chunk in chunked:
+                    await message.answer(chunk, parse_mode="html", disable_web_page_preview=True)
 
             if len(images) > 0:
                 images = list(map(lambda i: types.InputMediaPhoto(i), images))
@@ -285,15 +282,9 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
             if len(sources) > 0:
                 await message.answer("<b>📜 Sources</b>\n" + \
                                     "\n".join(map(lambda s: f"<a href='{s}'>{parse_domain(s)}</a>", sources)), 
-                                    parse_mode="html", disable_web_page_preview=True)
-
-            await message.answer(
-                f"📊 Used tokens *{tokens_total}* \(*{tokens_prompt}* prompt, *{tokens_completion}* completion\)\n" + \
-                f"⌛ Time spent *{escape(spent)}s*\n" + \
-                f"💸 Approximate price: *{escape(price)}$*",
-                parse_mode="MarkdownV2")
-            
+                                    parse_mode="html", disable_web_page_preview=True)            
             db.create_message(selected_chats[message.chat.id], "assistant", content=msg["content"])
+            return tokens+tokens_total
         elif msg["tool_calls"]:
             calls = msg["tool_calls"]
             db.create_message(selected_chats[message.chat.id], "assistant", tool_calls=calls)
@@ -308,22 +299,38 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
                     await message.answer(display_function(func['name'], args), parse_mode="html", disable_web_page_preview=True)
                     if func["name"] == "ask_webpage":
                         sources.append(args["url"])
-                    db.create_message(selected_chats[message.chat.id], "tool", 
-                                      content=await py_functions[func["name"]](**args), call_id=call["id"], function_name=func["name"])
+                    try:
+                        resp = await py_functions[func["name"]](**args)
+                        db.create_message(selected_chats[message.chat.id], "tool", 
+                                        content=resp, call_id=call["id"], function_name=func["name"])
+                    except Exception as e:
+                        log.warn(f"Caught exception [bold]{type(e).__name__}[/] ({'. '.join(map(str, e.args))}) while trying to use [bold]{func['name']}[/]") 
+                        log.console.print_exception()
+                        db.create_message(selected_chats[message.chat.id], "tool", 
+                                        content=f"Failed to use function {func['name']}: {type(e).__name__} ({'. '.join(map(str, e.args))})", call_id=call["id"], function_name=func["name"])
+
                 else:
                     log.warn(f"GPT tried to call non-existing {func['name']}")
                     await message.answer(f"❌ GPT tried to call non-existing <code>{func['name']}</code>", parse_mode="html")
                     db.create_message(selected_chats[message.chat.id], "tool", content=f"Function {func['name']} not found!", call_id=call["id"], function_name=func["name"])
-            await generate_result(message, start_prompt, level+1, call_id, sources, images)
+            
+            used = await generate_result(message, start_prompt, level+1, call_id, tokens+tokens_total, sources, images)
+            if level == 0:
+                log.success(f"Generation of [bold]{truncate_text(start_prompt)}[/] / [bold]0x{call_id:04x}[/] finished. Used [bold]{used+tokens_total}[/] tokens. Spent [bold]{spent}s[/]")
+                await message.answer( # TODO: bring price back
+                    f"📊 Used tokens *{used+tokens_total}*\n" + \
+                    f"⌛ Time spent *{escape(spent)}s*",
+                    parse_mode="MarkdownV2")
+
+            return used+tokens_total
         else:
             log.error("Empty message!..")
-            return
+            return 0
 
     except Exception as e:
-        log.error(
-            f"Caught exception [bold]{type(e).__name__}[/] ({'. '.join(e.args)}) on line [bold]{e.__traceback__.tb_lineno}[/]")
+        log.error(f"Caught exception [bold]{type(e).__name__}[/] ({'. '.join(map(str, e.args))}) on line [bold]{e.__traceback__.tb_lineno}[/]")
         log.console.print_exception()
-        await message.answer(f"❌ Error: `{type(e).__name__} ({'. '.join(e.args)})`", parse_mode="MarkdownV2")
+        await message.answer(f"❌ Error: `{type(e).__name__} ({'. '.join(map(str, e.args))})`", parse_mode="MarkdownV2")
 
 
 @dp.message_handler(content_types=["text", "photo"])
@@ -360,7 +367,6 @@ async def on_message(message: types.Message):
             db.create_message(selected_chats[message.from_id], "system", content=system_message)
 
     db.create_message(selected_chats[message.from_id], "user", content = message.text or message.caption)
-    log.info(f"Starting generation from [bold]{message.from_user.full_name} ({message.from_id})[/] with prompt [bold]{truncate_text(message.text)}[/]")
     await generate_result(new, message.text)
 
 
