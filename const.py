@@ -4,6 +4,8 @@ from yaml import load, Loader
 config = load(open("config.yml"), Loader=Loader)
 log = Logger()
 
+supported_images = ("jpeg", "png", "gif", "webp")
+
 commands = {
     "help": "Help message",
     "start": "Start message",

@@ -1,9 +1,15 @@
+import aiohttp
+import imghdr
 import re
 import openai
 import os
 import tiktoken
 
-from typing import List
+from io import BytesIO
+from random import randint
+from typing import List, Iterable
+
+from const import headers, log
 
 os.environ["TIKTOKEN_CACHE_DIR"] = "tiktoken_cache/"
 
@@ -121,3 +127,15 @@ def total_tokens(text: str) -> int:
 
 def split_text(text: str, size: int = 10000) -> List[str]:
     return list(map(detokenize, chunks(tokenize(text), size)))
+
+
+async def verify_image(url: str, types: Iterable[str]) -> bool:
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url) as response:
+                t = imghdr.what(None, h=await response.read()).lower()
+                return t in types
+    except Exception:
+        log.warn(f"Unable to determine filetype of [bold]{url}[/]")
+        log.console.print_exception()
+        return False

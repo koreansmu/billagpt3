@@ -292,8 +292,11 @@ async def generate_result(message: types.Message, start_prompt: str, level: int 
                 func = call['function']
                 args = json.loads(func["arguments"])
                 if func["name"] == "add_image":
-                    images.append(args["url"])
-                    db.create_message(selected_chats[message.chat.id], "tool", content="Done!", call_id=call["id"], function_name="add_image")
+                    if await verify_image(args["url"], supported_images): 
+                        images.append(args["url"])
+                        db.create_message(selected_chats[message.chat.id], "tool", content="Done!", call_id=call["id"], function_name="add_image")
+                    else:
+                        db.create_message(selected_chats[message.chat.id], "tool", content=f"Invalid image specified! Only {supported_images} are supported", call_id=call["id"], function_name="add_image")
                 elif func["name"] in py_functions.keys():
                     log.info(f"Calling [bold]{func['name']}[/] with [bold]{func['arguments']}[/]")
                     await message.answer(display_function(func['name'], args), parse_mode="html", disable_web_page_preview=True)
